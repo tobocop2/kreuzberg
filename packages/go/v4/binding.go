@@ -27,6 +27,22 @@ char *kreuzberg_load_extraction_config_from_file(const char *path);
 char *kreuzberg_list_embedding_presets(void);
 char *kreuzberg_get_embedding_preset(const char *name);
 
+// PDF rendering FFI structs and functions
+typedef struct {
+    uint8_t *data;
+    uintptr_t len;
+} CPageImage;
+
+typedef struct {
+    CPageImage *pages;
+    uintptr_t page_count;
+} CRenderResult;
+
+CRenderResult *kreuzberg_render_pdf_pages(const char *path, int32_t dpi);
+CPageImage *kreuzberg_render_pdf_page(const char *path, uintptr_t page_index, int32_t dpi);
+void kreuzberg_free_render_result(CRenderResult *result);
+void kreuzberg_free_render_page_result(CPageImage *page);
+
 // Validation FFI functions
 int32_t kreuzberg_validate_binarization_method(const char *method);
 int32_t kreuzberg_validate_ocr_backend(const char *backend);
@@ -281,6 +297,56 @@ func BatchExtractBytesSync(items []BytesWithMime, config *ExtractionConfig) ([]*
 	defer C.kreuzberg_free_batch_result(batch)
 
 	return convertCBatchResult(batch)
+}
+
+// RenderPdfPages renders every page of a PDF as a PNG image.
+// Returns a slice of PNG-encoded byte slices, one per page.
+func RenderPdfPages(path string, dpi int) ([][]byte, error) {
+	if path == "" {
+		return nil, newValidationErrorWithContext("path is required", nil, ErrorCodeValidation, nil)
+	}
+
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+
+	ffiMutex.Lock()
+	defer ffiMutex.Unlock()
+
+	cResult := C.kreuzberg_render_pdf_pages(cPath, C.int32_t(dpi))
+	if cResult == nil {
+		return nil, lastError()
+	}
+	defer C.kreuzberg_free_render_result(cResult)
+
+	n := int(cResult.page_count)
+	pages := make([][]byte, n)
+	pagesPtr := cResult.pages
+	for i := 0; i < n; i++ {
+		page := (*C.CPageImage)(unsafe.Pointer(uintptr(unsafe.Pointer(pagesPtr)) + uintptr(i)*unsafe.Sizeof(*pagesPtr)))
+		pages[i] = C.GoBytes(unsafe.Pointer(page.data), C.int(page.len))
+	}
+	return pages, nil
+}
+
+// RenderPdfPage renders a single page of a PDF as a PNG image.
+func RenderPdfPage(path string, pageIndex int, dpi int) ([]byte, error) {
+	if path == "" {
+		return nil, newValidationErrorWithContext("path is required", nil, ErrorCodeValidation, nil)
+	}
+
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+
+	ffiMutex.Lock()
+	defer ffiMutex.Unlock()
+
+	cResult := C.kreuzberg_render_pdf_page(cPath, C.uintptr_t(pageIndex), C.int32_t(dpi))
+	if cResult == nil {
+		return nil, lastError()
+	}
+	defer C.kreuzberg_free_render_page_result(cResult)
+
+	return C.GoBytes(unsafe.Pointer(cResult.data), C.int(cResult.len)), nil
 }
 
 // BatchExtractFilesWithConfigs extracts multiple files with per-file configuration overrides.

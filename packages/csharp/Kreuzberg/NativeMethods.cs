@@ -426,6 +426,63 @@ internal static partial class NativeMethods
     [DllImport(LibraryName, EntryPoint = "kreuzberg_get_embedding_preset", CallingConvention = CallingConvention.Cdecl)]
     internal static extern IntPtr GetEmbeddingPreset(IntPtr name);
 
+    /// <summary>
+    /// C-compatible struct for a single rendered page image (PNG bytes).
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct CPageImage
+    {
+        /// <summary>Pointer to PNG data.</summary>
+        public IntPtr Data;
+        /// <summary>Length of PNG data in bytes.</summary>
+        public UIntPtr Len;
+    }
+
+    /// <summary>
+    /// C-compatible struct for the result of rendering all pages of a PDF.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct CRenderResult
+    {
+        /// <summary>Pointer to array of CPageImage structs.</summary>
+        public IntPtr Pages;
+        /// <summary>Number of pages.</summary>
+        public UIntPtr PageCount;
+    }
+
+    /// <summary>
+    /// Renders all pages of a PDF as PNG images, returning a CRenderResult struct.
+    /// </summary>
+    /// <param name="filePath">Pointer to UTF-8 file path string.</param>
+    /// <param name="dpi">Rendering resolution in DPI.</param>
+    /// <returns>Pointer to CRenderResult (null on failure, check LastError).</returns>
+    [DllImport(LibraryName, EntryPoint = "kreuzberg_render_pdf_pages", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern IntPtr RenderPdfPages(IntPtr filePath, int dpi);
+
+    /// <summary>
+    /// Renders a single PDF page as a PNG image.
+    /// </summary>
+    /// <param name="filePath">Pointer to UTF-8 file path string.</param>
+    /// <param name="pageIndex">Zero-based page index.</param>
+    /// <param name="dpi">Rendering resolution in DPI.</param>
+    /// <returns>Pointer to CPageImage struct (null on failure, check LastError).</returns>
+    [DllImport(LibraryName, EntryPoint = "kreuzberg_render_pdf_page", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern IntPtr RenderPdfPage(IntPtr filePath, UIntPtr pageIndex, int dpi);
+
+    /// <summary>
+    /// Frees a render result returned by RenderPdfPages.
+    /// </summary>
+    /// <param name="result">Pointer to CRenderResult struct.</param>
+    [DllImport(LibraryName, EntryPoint = "kreuzberg_free_render_result", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void FreeRenderResult(IntPtr result);
+
+    /// <summary>
+    /// Frees a single page result returned by RenderPdfPage.
+    /// </summary>
+    /// <param name="page">Pointer to CPageImage struct.</param>
+    [DllImport(LibraryName, EntryPoint = "kreuzberg_free_render_page_result", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void FreeRenderPageResult(IntPtr page);
+
     private static IntPtr ResolveLibrary(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
     {
         if (!string.Equals(libraryName, LibraryName, StringComparison.Ordinal))

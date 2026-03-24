@@ -1438,6 +1438,103 @@ public static class KreuzbergClient
         }
     }
 
+    /// <summary>
+    /// Renders all pages of a PDF as PNG images.
+    /// </summary>
+    /// <param name="path">Path to the PDF file. Must not be empty.</param>
+    /// <param name="dpi">Rendering resolution in DPI (default 150).</param>
+    /// <returns>List of PNG-encoded byte arrays, one per page.</returns>
+    /// <exception cref="ArgumentException">If path is null or empty</exception>
+    /// <exception cref="KreuzbergException">If rendering fails</exception>
+    public static List<byte[]> RenderPdfPages(string path, int dpi = 150)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("path cannot be null or empty", nameof(path));
+        }
+
+        var pathPtr = InteropUtilities.AllocUtf8(path);
+        try
+        {
+            var resultPtr = NativeMethods.RenderPdfPages(pathPtr, dpi);
+            if (resultPtr == IntPtr.Zero)
+            {
+                ThrowLastError();
+            }
+
+            try
+            {
+                var renderResult = Marshal.PtrToStructure<NativeMethods.CRenderResult>(resultPtr);
+                var pageCount = (int)renderResult.PageCount;
+                var pageImageSize = Marshal.SizeOf<NativeMethods.CPageImage>();
+
+                var pages = new List<byte[]>(pageCount);
+                for (var i = 0; i < pageCount; i++)
+                {
+                    var pagePtr = renderResult.Pages + i * pageImageSize;
+                    var pageImage = Marshal.PtrToStructure<NativeMethods.CPageImage>(pagePtr);
+                    var length = (int)pageImage.Len;
+                    var pngBytes = new byte[length];
+                    Marshal.Copy(pageImage.Data, pngBytes, 0, length);
+                    pages.Add(pngBytes);
+                }
+                return pages;
+            }
+            finally
+            {
+                NativeMethods.FreeRenderResult(resultPtr);
+            }
+        }
+        finally
+        {
+            InteropUtilities.FreeUtf8(pathPtr);
+        }
+    }
+
+    /// <summary>
+    /// Renders a single PDF page as a PNG image.
+    /// </summary>
+    /// <param name="path">Path to the PDF file. Must not be empty.</param>
+    /// <param name="pageIndex">Zero-based page index.</param>
+    /// <param name="dpi">Rendering resolution in DPI (default 150).</param>
+    /// <returns>PNG-encoded byte array.</returns>
+    /// <exception cref="ArgumentException">If path is null or empty</exception>
+    /// <exception cref="KreuzbergException">If rendering fails</exception>
+    public static byte[] RenderPdfPage(string path, int pageIndex, int dpi = 150)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("path cannot be null or empty", nameof(path));
+        }
+
+        var pathPtr = InteropUtilities.AllocUtf8(path);
+        try
+        {
+            var resultPtr = NativeMethods.RenderPdfPage(pathPtr, (UIntPtr)pageIndex, dpi);
+            if (resultPtr == IntPtr.Zero)
+            {
+                ThrowLastError();
+            }
+
+            try
+            {
+                var pageImage = Marshal.PtrToStructure<NativeMethods.CPageImage>(resultPtr);
+                var length = (int)pageImage.Len;
+                var pngBytes = new byte[length];
+                Marshal.Copy(pageImage.Data, pngBytes, 0, length);
+                return pngBytes;
+            }
+            finally
+            {
+                NativeMethods.FreeRenderPageResult(resultPtr);
+            }
+        }
+        finally
+        {
+            InteropUtilities.FreeUtf8(pathPtr);
+        }
+    }
+
     private static IReadOnlyList<string> ParseStringListAndFree(IntPtr ptr)
     {
         if (ptr == IntPtr.Zero)

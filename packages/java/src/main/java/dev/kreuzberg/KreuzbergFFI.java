@@ -110,6 +110,10 @@ public final class KreuzbergFFI {
 	public static final MethodHandle KREUZBERG_CLASSIFY_ERROR;
 	public static final MethodHandle KREUZBERG_ERROR_CODE_NAME;
 	public static final MethodHandle KREUZBERG_ERROR_CODE_DESCRIPTION;
+	public static final MethodHandle KREUZBERG_RENDER_PDF_PAGES;
+	public static final MethodHandle KREUZBERG_RENDER_PDF_PAGE;
+	public static final MethodHandle KREUZBERG_FREE_RENDER_RESULT;
+	public static final MethodHandle KREUZBERG_FREE_RENDER_PAGE_RESULT;
 
 	public static final StructLayout C_EXTRACTION_RESULT_LAYOUT = MemoryLayout.structLayout(
 			ValueLayout.ADDRESS.withName("annotations_json"), ValueLayout.ADDRESS.withName("chunks_json"),
@@ -398,6 +402,21 @@ public final class KreuzbergFFI {
 
 			KREUZBERG_ERROR_CODE_DESCRIPTION = linkFunction("kreuzberg_error_code_description",
 					FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+
+			// PDF rendering: kreuzberg_render_pdf_pages(path, dpi) -> *mut CRenderResult
+			KREUZBERG_RENDER_PDF_PAGES = linkFunction("kreuzberg_render_pdf_pages",
+					FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
+
+			// PDF rendering: kreuzberg_render_pdf_page(path, page_index, dpi) -> *mut CPageImage
+			KREUZBERG_RENDER_PDF_PAGE = linkFunction("kreuzberg_render_pdf_page",
+					FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG,
+							ValueLayout.JAVA_INT));
+
+			KREUZBERG_FREE_RENDER_RESULT = linkFunction("kreuzberg_free_render_result",
+					FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
+
+			KREUZBERG_FREE_RENDER_PAGE_RESULT = linkFunction("kreuzberg_free_render_page_result",
+					FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
 		} catch (Exception e) {
 			throw new ExceptionInInitializerError(e);
 		}

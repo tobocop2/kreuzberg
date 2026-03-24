@@ -1373,6 +1373,109 @@ public final class Kreuzberg {
 		return configArray;
 	}
 
+	/**
+	 * Render all pages of a PDF as PNG images.
+	 *
+	 * @param path
+	 *            path to the PDF file
+	 * @param dpi
+	 *            resolution for rendering (e.g., 150)
+	 * @return list of PNG-encoded byte arrays, one per page
+	 * @throws IOException
+	 *             if the file cannot be read
+	 * @throws KreuzbergException
+	 *             if rendering fails
+	 */
+	public static List<byte[]> renderPdfPages(Path path, int dpi) throws IOException, KreuzbergException {
+		validateFile(path);
+		FFI_LOCK.lock();
+		try (Arena arena = Arena.ofConfined()) {
+			MemorySegment pathSegment = KreuzbergFFI.allocateCString(arena, path.toString());
+			MemorySegment resultPtr = (MemorySegment) KreuzbergFFI.KREUZBERG_RENDER_PDF_PAGES
+					.invoke(pathSegment, dpi);
+
+			if (resultPtr == null || resultPtr.address() == 0) {
+				throw KreuzbergFFI.createTypedException("PDF rendering failed");
+			}
+
+			try {
+				// CRenderResult layout: { pages: *mut CPageImage, page_count: usize }
+				MemorySegment result = resultPtr.reinterpret(ValueLayout.ADDRESS.byteSize() + ValueLayout.JAVA_LONG.byteSize());
+				MemorySegment pagesArrayPtr = result.get(ValueLayout.ADDRESS, 0);
+				long pageCount = result.get(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS.byteSize());
+
+				// CPageImage layout: { data: *mut u8, len: usize }
+				long pageImageSize = ValueLayout.ADDRESS.byteSize() + ValueLayout.JAVA_LONG.byteSize();
+				MemorySegment pagesArray = pagesArrayPtr.reinterpret(pageCount * pageImageSize);
+
+				List<byte[]> pages = new ArrayList<>();
+				for (long i = 0; i < pageCount; i++) {
+					long offset = i * pageImageSize;
+					MemorySegment dataPtr = pagesArray.get(ValueLayout.ADDRESS, offset);
+					long dataLen = pagesArray.get(ValueLayout.JAVA_LONG, offset + ValueLayout.ADDRESS.byteSize());
+					byte[] pngBytes = dataPtr.reinterpret(dataLen).toArray(ValueLayout.JAVA_BYTE);
+					pages.add(pngBytes);
+				}
+				return pages;
+			} finally {
+				KreuzbergFFI.KREUZBERG_FREE_RENDER_RESULT.invoke(resultPtr);
+			}
+		} catch (KreuzbergException e) {
+			throw e;
+		} catch (Throwable e) {
+			throw new KreuzbergException("Unexpected error during PDF rendering", e);
+		} finally {
+			FFI_LOCK.unlock();
+		}
+	}
+
+	/**
+	 * Render a single page of a PDF as a PNG image.
+	 *
+	 * @param path
+	 *            path to the PDF file
+	 * @param pageIndex
+	 *            zero-based page index
+	 * @param dpi
+	 *            resolution for rendering (e.g., 150)
+	 * @return PNG-encoded byte array
+	 * @throws IOException
+	 *             if the file cannot be read
+	 * @throws KreuzbergException
+	 *             if rendering fails
+	 */
+	public static byte[] renderPdfPage(Path path, int pageIndex, int dpi)
+			throws IOException, KreuzbergException {
+		validateFile(path);
+		FFI_LOCK.lock();
+		try (Arena arena = Arena.ofConfined()) {
+			MemorySegment pathSegment = KreuzbergFFI.allocateCString(arena, path.toString());
+
+			MemorySegment resultPtr = (MemorySegment) KreuzbergFFI.KREUZBERG_RENDER_PDF_PAGE
+					.invoke(pathSegment, (long) pageIndex, dpi);
+
+			if (resultPtr == null || resultPtr.address() == 0) {
+				throw KreuzbergFFI.createTypedException("PDF page rendering failed");
+			}
+
+			try {
+				// CPageImage layout: { data: *mut u8, len: usize }
+				MemorySegment page = resultPtr.reinterpret(ValueLayout.ADDRESS.byteSize() + ValueLayout.JAVA_LONG.byteSize());
+				MemorySegment dataPtr = page.get(ValueLayout.ADDRESS, 0);
+				long dataLen = page.get(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS.byteSize());
+				return dataPtr.reinterpret(dataLen).toArray(ValueLayout.JAVA_BYTE);
+			} finally {
+				KreuzbergFFI.KREUZBERG_FREE_RENDER_PAGE_RESULT.invoke(resultPtr);
+			}
+		} catch (KreuzbergException e) {
+			throw e;
+		} catch (Throwable e) {
+			throw new KreuzbergException("Unexpected error during PDF page rendering", e);
+		} finally {
+			FFI_LOCK.unlock();
+		}
+	}
+
 	private static void validateFile(Path path) throws IOException {
 		if (!Files.exists(path)) {
 			throw new IOException("File not found: " + path);

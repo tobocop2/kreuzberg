@@ -48,7 +48,7 @@ env:
 jobs:
   c-ffi-tests:
     name: C FFI Tests (${{ matrix.os }})
-    if: github.repository == 'kreuzberg-dev/kreuzberg' && github.actor != 'dependabot[bot]'
+    if: github.repository == 'tobocop2/kreuzberg' && github.actor != 'dependabot[bot]'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -135,7 +135,7 @@ jobs:
 
   c-ffi-tests-windows:
     name: C FFI Tests (windows-latest)
-    if: github.repository == 'kreuzberg-dev/kreuzberg' && github.actor != 'dependabot[bot]'
+    if: github.repository == 'tobocop2/kreuzberg' && github.actor != 'dependabot[bot]'
     runs-on: windows-latest
     timeout-minutes: 60
     steps:

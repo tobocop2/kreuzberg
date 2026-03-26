@@ -72,7 +72,7 @@ env:
 jobs:
   build-and-smoke-node:
     name: Node Build + Smoke (${{ matrix.target }})
-    if: github.repository == 'kreuzberg-dev/kreuzberg' && github.actor != 'dependabot[bot]'
+    if: github.repository == 'tobocop2/kreuzberg' && github.actor != 'dependabot[bot]'
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 360 || (matrix.os == 'ubuntu-24.04-arm' && 240 || 180) }}
     # Serialize matrix jobs to prevent concurrent cache API writes that trigger rate limits
     concurrency:
@@ -257,7 +257,7 @@ jobs:
 
   test-typescript:
     name: TypeScript Tests (${{ matrix.os }}, ${{ matrix.runtime }})
-    if: github.repository == 'kreuzberg-dev/kreuzberg' && github.actor != 'dependabot[bot]'
+    if: github.repository == 'tobocop2/kreuzberg' && github.actor != 'dependabot[bot]'
     needs: build-and-smoke-node
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 360 || (matrix.os == 'ubuntu-24.04-arm' && 240 || 180) }}
     strategy:
@@ -278,7 +278,7 @@ jobs:
             runtime: node
             coverage: false
           # Windows TypeScript tests temporarily disabled due to E2E test hangs
-          # TODO: Investigate and re-enable - see https://github.com/kreuzberg-dev/kreuzberg/actions/runs/21255391010
+          # TODO: Investigate and re-enable - see https://github.com/tobocop2/kreuzberg/actions/runs/21255391010
 
           # Bun runtime (same NAPI binaries, different JS runtime)
           - os: ubuntu-latest

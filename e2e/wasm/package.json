@@ -1,6 +1,6 @@
 {
 	"name": "@kreuzberg/e2e-wasm-tests",
-	"version": "4.8.5",
+	"version": "4.8.6",
 	"type": "module",
 	"description": "End-to-end tests for Kreuzberg WASM bindings",
 	"scripts": {
@@ -14,7 +14,7 @@
 	"devDependencies": {
 		"@types/node": "^25.6.0",
 		"@vitest/ui": "^4.1.4",
-		"typescript": "^6.0.2",
+		"typescript": "^6.0.3",
 		"vitest": "^4.1.4"
 	}
 }

@@ -229,6 +229,7 @@ type ChunkingConfig struct {
 	Embedding             *EmbeddingConfig   `json:"embedding,omitempty"`
 	Sizing                *ChunkSizingConfig `json:"sizing,omitempty"`
 	PrependHeadingContext *bool              `json:"prepend_heading_context,omitempty"`
+	TopicThreshold        *float64           `json:"topic_threshold,omitempty"`
 }
 
 // ImageExtractionConfig controls inline image extraction from PDFs/Office docs.
@@ -289,9 +290,10 @@ type LanguageDetectionConfig struct {
 
 // LayoutDetectionConfig configures ONNX-based document layout detection.
 type LayoutDetectionConfig struct {
-	ConfidenceThreshold *float32 `json:"confidence_threshold,omitempty"`
-	ApplyHeuristics     *bool    `json:"apply_heuristics,omitempty"`
-	TableModel          *string  `json:"table_model,omitempty"`
+	ConfidenceThreshold *float32            `json:"confidence_threshold,omitempty"`
+	ApplyHeuristics     *bool               `json:"apply_heuristics,omitempty"`
+	TableModel          *string             `json:"table_model,omitempty"`
+	Acceleration        *AccelerationConfig `json:"acceleration,omitempty"`
 }
 
 // PostProcessorConfig determines which post processors run.
@@ -339,6 +341,7 @@ type EmbeddingConfig struct {
 	BatchSize            *int                `json:"batch_size,omitempty"`
 	ShowDownloadProgress *bool               `json:"show_download_progress,omitempty"`
 	CacheDir             *string             `json:"cache_dir,omitempty"`
+	Acceleration         *AccelerationConfig `json:"acceleration,omitempty"`
 }
 
 // KeywordConfig configures keyword extraction.

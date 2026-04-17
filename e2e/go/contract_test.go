@@ -207,6 +207,44 @@ func TestContractConfigChunkingPrependHeadingContext(t *testing.T) {
 	assertChunks(t, result, intPtr(2), nil, boolPtr(true), nil, boolPtr(true), nil, boolPtr(true))
 }
 
+func TestContractConfigChunkingSemantic(t *testing.T) {
+	skipIfFeatureUnavailable(t, "chunking")
+	result := runExtraction(t, "semantic/annual_report.txt", []byte(`{
+"chunking": {
+	"chunker_type": "semantic"
+}
+}`))
+	assertExpectedMime(t, result, []string{"text/plain"})
+	assertMinContentLength(t, result, 100)
+	assertChunks(t, result, intPtr(2), nil, boolPtr(true), nil, nil, nil, nil)
+}
+
+func TestContractConfigChunkingSemanticSmall(t *testing.T) {
+	skipIfFeatureUnavailable(t, "chunking")
+	result := runExtraction(t, "semantic/annual_report.txt", []byte(`{
+"chunking": {
+	"chunker_type": "semantic",
+	"max_chars": 200
+}
+}`))
+	assertExpectedMime(t, result, []string{"text/plain"})
+	assertMinContentLength(t, result, 100)
+	assertChunks(t, result, intPtr(5), nil, boolPtr(true), nil, nil, nil, nil)
+}
+
+func TestContractConfigChunkingSemanticThreshold(t *testing.T) {
+	skipIfFeatureUnavailable(t, "chunking")
+	result := runExtraction(t, "semantic/mixed_topics.txt", []byte(`{
+"chunking": {
+	"chunker_type": "semantic",
+	"topic_threshold": 0.5
+}
+}`))
+	assertExpectedMime(t, result, []string{"text/plain"})
+	assertMinContentLength(t, result, 100)
+	assertChunks(t, result, intPtr(1), nil, boolPtr(true), nil, nil, nil, nil)
+}
+
 func TestContractConfigChunkingSmall(t *testing.T) {
 	skipIfFeatureUnavailable(t, "chunking")
 	result := runExtraction(t, "pdf/fake_memo.pdf", []byte(`{
@@ -360,7 +398,7 @@ func TestContractConfigForceOcrPages(t *testing.T) {
 func TestContractConfigHtmlOptions(t *testing.T) {
 	result := runExtraction(t, "html/complex_table.html", []byte(`{
 "html_options": {
-	"extractMetadata": true
+	"extract_metadata": true
 }
 }`))
 	assertExpectedMime(t, result, []string{"text/html"})

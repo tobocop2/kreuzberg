@@ -2821,6 +2821,13 @@ public sealed class EmbeddingConfig
     /// </summary>
     [JsonPropertyName("use_cache")]
     public bool? UseCache { get; init; }
+
+    /// <summary>
+    /// Hardware acceleration configuration for ONNX Runtime models.
+    /// If null, uses default acceleration settings.
+    /// </summary>
+    [JsonPropertyName("acceleration")]
+    public AccelerationConfig? Acceleration { get; init; }
 }
 
 /// <summary>
@@ -2859,11 +2866,21 @@ public sealed class ChunkingConfig
     public string? Preset { get; init; }
 
     /// <summary>
-    /// Type of chunker to use: "text" (default), "markdown", or "yaml".
-    /// The markdown chunker preserves document structure during splitting.
+    /// Type of chunker to use: "text" (default), "markdown", "yaml", or "semantic".
+    /// Set to "semantic" for topic-aware chunking that works out of the box with
+    /// sensible defaults (max_chars=1000, overlap=200, topic_threshold=0.75).
+    /// No other parameters needed.
     /// </summary>
     [JsonPropertyName("chunker_type")]
     public string? ChunkerType { get; init; }
+
+    /// <summary>
+    /// Cosine similarity threshold for semantic topic detection (0.0-1.0).
+    /// Optional, defaults to 0.75. Only relevant when ChunkerType is "semantic"
+    /// and embeddings are configured. Rarely needs tuning.
+    /// </summary>
+    [JsonPropertyName("topic_threshold")]
+    public double? TopicThreshold { get; init; }
 
     /// <summary>
     /// Embedding configuration for vector generation.
@@ -4378,6 +4395,13 @@ public sealed class LayoutDetectionConfig
     /// </summary>
     [JsonPropertyName("table_model")]
     public string? TableModel { get; init; }
+
+    /// <summary>
+    /// Hardware acceleration configuration for ONNX Runtime models.
+    /// If null, uses default acceleration settings.
+    /// </summary>
+    [JsonPropertyName("acceleration")]
+    public AccelerationConfig? Acceleration { get; init; }
 }
 
 // ============================================================================

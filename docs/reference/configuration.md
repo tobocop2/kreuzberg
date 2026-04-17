@@ -253,7 +253,7 @@ Main extraction configuration controlling all aspects of document processing.
 | `acceleration`               | `AccelerationConfig?`      | `None`                 | Hardware acceleration configuration for ONNX Runtime inference (layout detection and embeddings). See [AccelerationConfig](#accelerationconfig).                                                 |
 | `include_document_structure` | `bool`                     | `false`                | Enable structured document model output. When true, the `document` field on ExtractionResult is populated with a tree-based representation of document content.                                  |
 | `tree_sitter`                | `TreeSitterConfig?`        | `None`                 | Tree-sitter code intelligence configuration. Controls code analysis features when extracting source code files. Only available with `tree-sitter` feature.                                       |
-| `structured_extraction`      | `StructuredExtractionConfig?` | `None`              | Structured extraction configuration for LLM-powered schema-based extraction. When set, extraction results include a `structured_output` field with data conforming to the provided JSON schema. Only available with `llm` feature. |
+| `structured_extraction`      | `StructuredExtractionConfig?` | `None`              | Structured extraction configuration for LLM-powered schema-based extraction. When set, extraction results include a `structured_output` field with data conforming to the provided JSON schema. Only available with `liter-llm` feature. |
 
 ### Result Format vs Output Format
 
@@ -586,7 +586,7 @@ Configuration for OCR (Optical Character Recognition) processing on images and s
 | `language`         | `str`              | `"eng"`       | Language code(s) for OCR, for example, `"eng"`, `"eng+fra"`, `"eng+deu+fra"` |
 | `tesseract_config` | `TesseractConfig?` | `None`        | Tesseract-specific configuration options                              |
 | `paddle_ocr_config` | `PaddleOcrConfig?` | `None`       | PaddleOCR-specific configuration options                              |
-| `vlm_config`       | `LlmConfig?`       | `None`        | Vision Language Model configuration for VLM-based OCR. When set, enables using a VLM as an OCR backend. Requires the `llm` feature. |
+| `vlm_config`       | `LlmConfig?`       | `None`        | Vision Language Model configuration for VLM-based OCR. When set, enables using a VLM as an OCR backend. Requires the `liter-llm` feature. |
 | `vlm_prompt`       | `String?`           | `None`        | Custom prompt for VLM-based OCR. Overrides the default OCR prompt sent to the vision model. Useful for domain-specific extraction instructions. |
 
 ### Example
@@ -735,12 +735,15 @@ Configuration for splitting extracted text into overlapping chunks, useful for v
 | `embedding`      | `EmbeddingConfig?` | `None`  | Optional embedding generation for each chunk                                      |
 | `preset`         | `str?`             | `None`  | Chunking preset: `"small"` (500/100), `"medium"` (1000/200), `"large"` (2000/400) |
 | `trim`           | `bool`             | `true`  | Whether to trim whitespace from chunk boundaries                                  |
-| `chunker_type`   | `ChunkerType`      | `Text`  | Type of chunker: `Text`, `Markdown`, or `Yaml`                                    |
+| `chunker_type`   | `ChunkerType`      | `Text`  | Type of chunker: `Text`, `Markdown`, `Yaml`, or `Semantic`. Set to `"semantic"` for topic-aware chunking that works out of the box with no extra configuration needed. |
+| `topic_threshold` | `float` / `None`  | `0.75`  | Optional. Cosine similarity threshold for topic boundary detection (0.0-1.0). Only used with `chunker_type="semantic"` and an embedding config. Rarely needs tuning. |
 | `sizing` <span class="version-badge">v4.5.0</span> | `ChunkSizing`      | `Characters` | Controls how chunk size is measured. `Characters` counts characters (default). `Tokenizer` counts tokens using a HuggingFace tokenizer model. Requires the `chunking-tokenizers` feature |
 
 **Note:** `max_chars` and `max_overlap` are accepted as aliases for `max_characters` and `overlap` respectively for backwards compatibility.
 
 When `chunker_type` is set to `"markdown"`, the chunker populates `heading_context` on each chunk's metadata with the heading hierarchy (for example, `# Title > ## Section`) that the chunk falls under. This is useful for preserving semantic context in RAG pipelines.
+
+When `chunker_type` is set to `"semantic"`, the chunker groups paragraphs by topic similarity. It works out of the box with no extra configuration -- just set `chunker_type="semantic"` and all defaults (max_characters=1000, overlap=200, topic_threshold=0.75) are tuned for typical RAG use cases. If an `embedding` config is provided, adjacent segments are compared and split at topic boundaries where cosine similarity falls below `topic_threshold`. Without embeddings, structural-only splitting is performed.
 
 ### Example
 
@@ -863,7 +866,7 @@ model = { type = "llm", model = "openai/text-embedding-3-small" }
 batch_size = 32
 ```
 
-**Note**: When `api_key` is not set in `LlmConfig`, liter-llm falls back to provider-standard environment variables (for example, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`). Requires the `llm` feature.
+**Note**: When `api_key` is not set in `LlmConfig`, liter-llm falls back to provider-standard environment variables (for example, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`). Requires the `liter-llm` feature.
 
 ### Cache Directory
 

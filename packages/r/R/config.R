@@ -178,18 +178,42 @@ ocr_config <- function(backend = "tesseract", language = "eng", dpi = NULL, ...)
 #'
 #' @param max_characters Maximum characters per chunk. Must be a positive integer.
 #' @param overlap Number of overlapping characters between chunks. Must be non-negative.
+#' @param chunker_type Chunker type: "text", "markdown", "yaml", or "semantic". Default "text".
+#' @param topic_threshold Numeric or NULL. Cosine similarity threshold for semantic
+#'   topic detection (0.0-1.0). Only used when chunker_type is "semantic". Default NULL (0.75).
 #' @param ... Additional chunking options.
 #' @return A named list representing the chunking configuration.
 #' @export
-chunking_config <- function(max_characters = 1000L, overlap = 200L, ...) {
+chunking_config <- function(max_characters = 1000L, overlap = 200L,
+                            chunker_type = "text", topic_threshold = NULL, ...) {
   max_characters <- as.integer(max_characters)
   overlap <- as.integer(overlap)
   if (max_characters <= 0L) stop("max_characters must be a positive integer", call. = FALSE)
   if (overlap < 0L) stop("overlap must be non-negative", call. = FALSE)
+  stopifnot(is.character(chunker_type), length(chunker_type) == 1L)
+  valid_chunker_types <- c("text", "markdown", "yaml", "semantic")
+  if (!chunker_type %in% valid_chunker_types) {
+    stop(
+      paste0(
+        "chunker_type must be one of: ",
+        paste(valid_chunker_types, collapse = ", "),
+        ", got: ", chunker_type
+      ),
+      call. = FALSE
+    )
+  }
   config <- list(
     max_characters = max_characters,
-    overlap = overlap
+    overlap = overlap,
+    chunker_type = chunker_type
   )
+  if (!is.null(topic_threshold)) {
+    topic_threshold <- as.double(topic_threshold)
+    if (topic_threshold < 0 || topic_threshold > 1) {
+      stop("topic_threshold must be between 0.0 and 1.0", call. = FALSE)
+    }
+    config$topic_threshold <- topic_threshold
+  }
   extras <- list(...)
   if (length(extras) > 0) config <- c(config, extras)
   config
@@ -206,11 +230,15 @@ chunking_config <- function(max_characters = 1000L, overlap = 200L, ...) {
 #'   "tatr" (default), "slanet_wired", "slanet_wireless", "slanet_plus",
 #'   "slanet_auto", "disabled".
 #'   Default NULL (use engine default).
+#' @param acceleration Named list or NULL. Hardware acceleration configuration
+#'   (e.g., from \code{acceleration_config()}). Controls which ONNX execution
+#'   provider is used for layout and table models. Default NULL (auto-select).
 #' @param ... Additional layout detection options.
 #' @return A named list representing the layout detection configuration.
 #' @export
 layout_detection_config <- function(confidence_threshold = NULL,
-                                    apply_heuristics = TRUE, table_model = NULL, ...) {
+                                    apply_heuristics = TRUE, table_model = NULL,
+                                    acceleration = NULL, ...) {
   config <- list(apply_heuristics = apply_heuristics)
   if (!is.null(confidence_threshold)) {
     confidence_threshold <- as.double(confidence_threshold)
@@ -234,6 +262,7 @@ layout_detection_config <- function(confidence_threshold = NULL,
     }
     config$table_model <- table_model
   }
+  if (!is.null(acceleration)) config$acceleration <- acceleration
   extras <- list(...)
   if (length(extras) > 0) config <- c(config, extras)
   config
@@ -426,9 +455,13 @@ from_file <- function(path) {
 #' @param model Embedding model name or preset (e.g., "fast", "balanced", "quality", "multilingual").
 #' @param normalize Logical. Normalize embedding vectors to unit length. Default TRUE.
 #' @param batch_size Integer or NULL. Batch size for embedding generation. Default NULL.
+#' @param acceleration Named list or NULL. Hardware acceleration configuration
+#'   (e.g., from \code{acceleration_config()}). Controls which ONNX execution
+#'   provider is used for the embedding model. Default NULL (auto-select).
 #' @return A named list representing the embedding configuration.
 #' @export
-embedding_config <- function(model = "balanced", normalize = TRUE, batch_size = NULL) {
+embedding_config <- function(model = "balanced", normalize = TRUE, batch_size = NULL,
+                             acceleration = NULL) {
   stopifnot(is.character(model), length(model) == 1L)
   stopifnot(is.logical(normalize), length(normalize) == 1L)
 
@@ -442,6 +475,8 @@ embedding_config <- function(model = "balanced", normalize = TRUE, batch_size = 
     if (batch_size <= 0L) stop("batch_size must be a positive integer", call. = FALSE)
     config$batch_size <- batch_size
   }
+
+  if (!is.null(acceleration)) config$acceleration <- acceleration
 
   config
 }

@@ -143,6 +143,9 @@ function mapChunkingConfig(raw: PlainRecord): ChunkingConfig {
 		(config as PlainRecord).chunkerType = raw.chunker_type;
 	}
 	assignBooleanField(config as PlainRecord, raw, "prepend_heading_context", "prependHeadingContext");
+	if (typeof raw.topic_threshold === "number") {
+		(config as PlainRecord).topicThreshold = raw.topic_threshold;
+	}
 	return config;
 }
 
@@ -694,6 +697,18 @@ export const assertions = {
 		}
 		if (Array.isArray(warnings) && typeof maxCount === "number") {
 			expect(warnings.length).toBeLessThanOrEqual(maxCount);
+		}
+	},
+
+	assertLlmUsage(result: ExtractionResult, maxCount?: number | null, isEmpty?: boolean | null): void {
+		const usage = (result as unknown as PlainRecord).llmUsage ?? (result as unknown as PlainRecord).llm_usage;
+		if (isEmpty === true) {
+			if (usage != null) {
+				expect(Array.isArray(usage) && usage.length === 0).toBe(true);
+			}
+		}
+		if (Array.isArray(usage) && typeof maxCount === "number") {
+			expect(usage.length).toBeLessThanOrEqual(maxCount);
 		}
 	},
 

@@ -7,13 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [4.8.6] - 2026-04-17
+
+### Added
+
+- **PST message EntryID in extracted metadata** — the `entry_id` field from Outlook PST message entries is now included in the `metadata` HashMap of `EmailExtractionResult`, enabling callers to unambiguously link extracted data back to its source message. (#739)
+- **AccelerationConfig wired through all ORT model loading** — `AccelerationConfig` (CUDA, CoreML, TensorRT, Auto) is now propagated to all ONNX Runtime sessions: layout detection (RT-DETR, YOLO, SLANeT, TATR, TableClassifier), embeddings, document orientation, and PaddleOCR. Previously, GPU acceleration was silently ignored and all models used CPU. The `acceleration` field is also added to `LayoutDetectionConfig` and `EmbeddingConfig` across all 11 bindings (Python, TypeScript, Ruby, Go, Java, C#, PHP, R, Elixir, FFI, WASM). (#740)
+
+### Added
+
+- Semantic chunker (`ChunkerType::Semantic`) for topic-aware document splitting
+- `topic_threshold` configuration field for embedding-based topic detection
+- `utils/markdown_utils` shared utility for ATX heading detection
+- `preset_chunk_size()` helper in embeddings module
+- E2e contract fixtures for semantic chunking
 
 ### Fixed
 
+- **Batch extraction panics with "Lazy instance has previously been poisoned" on ARM64 Linux** — OCR backend registry initialization used `panic!()` on Tesseract/PaddleOCR init failures, poisoning the `Lazy` static and cascading to all concurrent batch tasks. Replaced with `tracing::warn!()` + graceful skip. Also converted `GLOBAL_RUNTIME`, `EXTRACTORS_INITIALIZED`, and 3 `PROCESSOR_INITIALIZED` statics from `once_cell::sync::Lazy` to `once_cell::sync::OnceCell` (retry on failure instead of permanent poisoning). Migrated ~15 collection/cache `Lazy` statics to `std::sync::LazyLock`. (#741)
+- **PaddleOCR `model_tier` from TOML config ignored by API server** — the singleton PaddleOcrBackend always used `self.config.model_tier` (default "mobile") to resolve models, ignoring the per-request `paddle_ocr_config.model_tier` from the user's TOML/API config. Engine initialization now uses the effective per-request config. (#725)
+- **VLM OCR backend ignored when paddle-ocr feature enabled** — the auto-constructed OCR pipeline hardcoded `vlm_config: None` on pipeline stages, silently discarding the user's VLM configuration. Users who configured `OcrConfig(backend="vlm", vlm_config=LlmConfig(...))` got tesseract/paddleocr output instead of VLM. The pipeline now propagates `vlm_config` from the parent `OcrConfig`. (#738)
+- **Doubled OCR content and corrupted page text in image extraction** — OCR elements were injected into the rendering pipeline as `OcrText` internal elements, causing `render_plain` to append every raw word token after the coherent HOCR string. `ExtractionResult.content` was effectively duplicated and `pages[*].content` contained a word-by-word dump instead of the readable text. OCR elements are now stored directly via `prebuilt_ocr_elements`, bypassing the rendering pipeline. (#706)
+- **Image OCR pages[] empty** — `include_elements` was not forced true for image extraction, so backends that gate element output (e.g. paddle-ocr) returned `None`, leaving `pages[]` empty. (#723)
+- **`LlmConfig` missing `Default` trait** — the documented `..Default::default()` struct-update pattern failed to compile with "trait not satisfied". Added `Default` to the derive macro; all optional fields default to `None`, `model` to `""`. (#716)
+- **Incorrect `llm` Cargo feature name in docs** — `llm-integration.md`, `api-rust.md`, and `configuration.md` referenced a `llm` feature that does not exist; the correct name is `liter-llm`. (#717)
 - **LLM embedding provider panics in server mode** — `embed_texts` called `block_on` inside a new runtime, which panics when already inside tokio (HTTP server, MCP). Uses `block_in_place` with the current runtime handle when available, falls back to a new runtime for standalone sync callers. (#713, #714)
 - **Duplicate `output_format` key in OCR metadata** — stale `additional` HashMap insert caused a duplicate JSON key violating RFC 8259. The value is already on the typed `Metadata::output_format` field. (#712)
 - **OCR table metadata serialized as strings instead of numbers** — `table_count`, `tables_detected`, `table_rows`, and `table_cols` were `"0"` instead of `0`, breaking numeric comparisons in all bindings. (#712)
+- **Ruby `structured_output` not exposed on Result** — the field was missing from the Ruby binding's `Result` class and not serialized from the native extension. (#736)
+- **Stale hf-hub lock files block embedding model downloads** — cleaned up orphaned lock files before downloading. (#721)
+- **WASM live demo `enableOcr()` not called** — OCR was silently unavailable in the demo; also throws on missing Rust registry export. (#719, #720)
+- **DOCX tables assigned wrong page numbers** — tables were numbered by index instead of by their actual document position based on page breaks. (#718)
+- **`ocr.enabled=false` config ignored** — OCR ran even when explicitly disabled; also dropped trailing newline in `--format text` output. (#715)
+- **Go module tag push fallback** — added `git push` fallback when tag push fails.
+- **Go E2E `LlmUsage` type mismatch** — generated Go test helper used `[]interface{}{}` instead of `[]kreuzberg.LlmUsage{}`.
+- **Rust E2E `extractMetadata` field name** — html_options fixture used camelCase `extractMetadata` instead of snake_case `extract_metadata` expected by html-to-markdown-rs v3.2.
+- **R package documentation stale** — 14 exported functions lacked `.Rd` man pages and `extraction_config.Rd` was missing 13 parameters added in v4.8.0–4.8.5. Regenerated all roxygen2 documentation.
+
+### Changed
+
+- Updated all dependencies including html-to-markdown-rs 3.1→3.2, pdf_oxide 0.3.30→0.3.32, tokio 1.51→1.52.
 
 ---
 
@@ -28,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Markdown chunker duplicates heading when `prepend_heading_context` is enabled** — the heading was prepended twice when a chunk boundary aligned with a heading node, producing repeated heading text in the output. (#701)
 - **Helm chart icon 404 on Artifact Hub** — `Chart.yaml` referenced `logo.png` but the file is `logo.svg`.
 - **Python wheel manylinux compliance failure** — bumped manylinux from `2_38` to `2_39` to allow `GLIBCXX_3.4.31` symbols from the build toolchain, matching the v4.6.x baseline that worked.
+- **Python wheel requires glibc ≥ 2.38 (breaks Debian 12, Ubuntu 22.04)** — GCC 14 in the `manylinux_2_39` build container emitted C23-versioned glibc symbols (`__isoc23_strtoll`, `__isoc23_sscanf`, etc.), making the wheel uninstallable on systems with glibc < 2.38. Downgraded to `manylinux_2_28` and added `-std=gnu11`/`-std=gnu++17` CFLAGS to suppress C23 symbol emission. (#588)
 - **FFI memory leak** — `kreuzberg_free_result` was not freeing `djot_content_json`, `structured_output_json`, and `llm_usage_json` pointers.
 - **R e2e embed tests fail** — generated R embedding config was missing the `type` discriminator field required by Rust's tagged enum deserialization.
 - **Elixir parity test fails** — `ExtractionConfig` struct was missing the `:html_output` field.
@@ -3026,6 +3060,7 @@ See [Migration Guide](https://docs.kreuzberg.dev/migration/v3-to-v4/) for detail
 - [Format Support](docs/reference/formats.md) - Supported file formats
 - [Extraction Guide](docs/guides/extraction.md) - Extraction examples
 
+[4.8.5]: https://github.com/kreuzberg-dev/kreuzberg/releases/tag/v4.8.5
 [4.8.4]: https://github.com/kreuzberg-dev/kreuzberg/releases/tag/v4.8.4
 [4.8.3]: https://github.com/kreuzberg-dev/kreuzberg/releases/tag/v4.8.3
 [4.8.2]: https://github.com/kreuzberg-dev/kreuzberg/releases/tag/v4.8.2

@@ -135,6 +135,9 @@ function mapChunkingConfig(raw: PlainRecord): ChunkingConfig {
 		config.chunkerType = raw.chunker_type;
 	}
 	assignBooleanField(config, raw, "prepend_heading_context", "prependHeadingContext");
+	if (typeof raw.topic_threshold === "number") {
+		config.topicThreshold = raw.topic_threshold;
+	}
 	return config as unknown as ChunkingConfig;
 }
 
@@ -739,6 +742,19 @@ export const assertions = {
 		const warnings = ((result as unknown as PlainRecord).processingWarnings ??
 			(result as unknown as PlainRecord).processing_warnings) as unknown[] | undefined;
 		const list = Array.isArray(warnings) ? warnings : [];
+		if (typeof maxCount === "number") {
+			expect(list.length <= maxCount).toBe(true);
+		}
+		if (isEmpty === true) {
+			expect(list.length).toBe(0);
+		}
+	},
+
+	assertLlmUsage(result: ExtractionResult, maxCount?: number | null, isEmpty?: boolean | null): void {
+		const usage = ((result as unknown as PlainRecord).llmUsage ?? (result as unknown as PlainRecord).llm_usage) as
+			| unknown[]
+			| undefined;
+		const list = Array.isArray(usage) ? usage : [];
 		if (typeof maxCount === "number") {
 			expect(list.length <= maxCount).toBe(true);
 		}

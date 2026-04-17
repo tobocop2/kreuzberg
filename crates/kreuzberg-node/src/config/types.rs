@@ -42,6 +42,7 @@ unsafe extern "C" {
 
 #[napi(object)]
 pub struct JsOcrConfig {
+    pub enabled: Option<bool>,
     pub backend: String,
     pub language: Option<String>,
     pub tesseract_config: Option<JsTesseractConfig>,
@@ -78,6 +79,7 @@ pub struct JsOcrElementConfig {
 impl From<JsOcrConfig> for RustOcrConfig {
     fn from(val: JsOcrConfig) -> Self {
         RustOcrConfig {
+            enabled: val.enabled.unwrap_or(true),
             backend: val.backend,
             language: val.language.unwrap_or_else(|| "eng".to_string()),
             tesseract_config: val.tesseract_config.map(Into::into),
@@ -455,6 +457,8 @@ pub struct JsEmbeddingConfig {
     pub show_download_progress: Option<bool>,
     /// Custom cache directory for model storage
     pub cache_dir: Option<String>,
+    /// Hardware acceleration configuration for ONNX Runtime inference
+    pub acceleration: Option<JsAccelerationConfig>,
 }
 
 impl From<JsEmbeddingConfig> for RustEmbeddingConfig {
@@ -467,6 +471,7 @@ impl From<JsEmbeddingConfig> for RustEmbeddingConfig {
             batch_size: val.batch_size.unwrap_or(32) as usize,
             show_download_progress: val.show_download_progress.unwrap_or(false),
             cache_dir: val.cache_dir.map(std::path::PathBuf::from),
+            acceleration: val.acceleration.map(Into::into),
         }
     }
 }
@@ -479,7 +484,9 @@ pub struct JsChunkingConfig {
     pub embedding: Option<JsEmbeddingConfig>,
     /// Optional preset name for chunking parameters
     pub preset: Option<String>,
-    /// Chunker type: "text" (default) or "markdown"
+    /// Chunker type: "text" (default), "markdown", "yaml", or "semantic".
+    /// Set to "semantic" for topic-aware chunking that works out of the box
+    /// with sensible defaults. No other parameters needed.
     pub chunker_type: Option<String>,
     /// Sizing type: "characters" (default) or "tokenizer"
     pub sizing_type: Option<String>,
@@ -490,12 +497,18 @@ pub struct JsChunkingConfig {
     /// Prepend heading context to each chunk when using markdown chunker
     #[napi(js_name = "prependHeadingContext")]
     pub prepend_heading_context: Option<bool>,
+    /// Cosine similarity threshold for semantic topic detection (0.0-1.0).
+    /// Optional, defaults to 0.75. Rarely needs tuning.
+    #[napi(js_name = "topicThreshold")]
+    pub topic_threshold: Option<f64>,
 }
 
 impl From<JsChunkingConfig> for RustChunkingConfig {
     fn from(val: JsChunkingConfig) -> Self {
         let ct = match val.chunker_type.as_deref() {
             Some("markdown") => ChunkerType::Markdown,
+            Some("yaml") => ChunkerType::Yaml,
+            Some("semantic") => ChunkerType::Semantic,
             _ => ChunkerType::Text,
         };
         let sizing = resolve_chunk_sizing(val.sizing_type, val.sizing_model, val.sizing_cache_dir);
@@ -508,6 +521,7 @@ impl From<JsChunkingConfig> for RustChunkingConfig {
             preset: val.preset,
             sizing,
             prepend_heading_context: val.prepend_heading_context.unwrap_or(false),
+            topic_threshold: val.topic_threshold.map(|t| t as f32),
         }
     }
 }
@@ -1398,6 +1412,8 @@ pub struct JsLayoutDetectionConfig {
     pub confidence_threshold: Option<f64>,
     pub apply_heuristics: Option<bool>,
     pub table_model: Option<String>,
+    /// Hardware acceleration configuration for ONNX Runtime inference
+    pub acceleration: Option<JsAccelerationConfig>,
 }
 
 impl From<JsLayoutDetectionConfig> for kreuzberg::core::config::layout::LayoutDetectionConfig {
@@ -1406,6 +1422,7 @@ impl From<JsLayoutDetectionConfig> for kreuzberg::core::config::layout::LayoutDe
             confidence_threshold: val.confidence_threshold.map(|v| v as f32),
             apply_heuristics: val.apply_heuristics.unwrap_or(true),
             table_model: val.table_model.as_deref().map(parse_table_model).unwrap_or_default(),
+            acceleration: val.acceleration.map(Into::into),
         }
     }
 }
@@ -1416,6 +1433,16 @@ impl From<kreuzberg::core::config::layout::LayoutDetectionConfig> for JsLayoutDe
             confidence_threshold: config.confidence_threshold.map(|v| v as f64),
             apply_heuristics: Some(config.apply_heuristics),
             table_model: Some(config.table_model.to_string()),
+            acceleration: config.acceleration.map(|a| JsAccelerationConfig {
+                provider: Some(match a.provider {
+                    RustExecutionProviderType::Auto => "auto".to_string(),
+                    RustExecutionProviderType::Cpu => "cpu".to_string(),
+                    RustExecutionProviderType::CoreMl => "coreml".to_string(),
+                    RustExecutionProviderType::Cuda => "cuda".to_string(),
+                    RustExecutionProviderType::TensorRt => "tensorrt".to_string(),
+                }),
+                device_id: Some(a.device_id),
+            }),
         }
     }
 }
@@ -1576,6 +1603,7 @@ impl TryFrom<ExtractionConfig> for JsExtractionConfig {
             use_cache: Some(val.use_cache),
             enable_quality_processing: Some(val.enable_quality_processing),
             ocr: val.ocr.map(|ocr| JsOcrConfig {
+                enabled: Some(ocr.enabled),
                 backend: ocr.backend,
                 language: Some(ocr.language),
                 tesseract_config: ocr.tesseract_config.map(|tc| JsTesseractConfig {
@@ -1643,12 +1671,23 @@ impl TryFrom<ExtractionConfig> for JsExtractionConfig {
                     batch_size: Some(emb.batch_size as u32),
                     show_download_progress: Some(emb.show_download_progress),
                     cache_dir: emb.cache_dir.and_then(|p| p.to_str().map(String::from)),
+                    acceleration: emb.acceleration.map(|a| JsAccelerationConfig {
+                        provider: Some(match a.provider {
+                            RustExecutionProviderType::Auto => "auto".to_string(),
+                            RustExecutionProviderType::Cpu => "cpu".to_string(),
+                            RustExecutionProviderType::CoreMl => "coreml".to_string(),
+                            RustExecutionProviderType::Cuda => "cuda".to_string(),
+                            RustExecutionProviderType::TensorRt => "tensorrt".to_string(),
+                        }),
+                        device_id: Some(a.device_id),
+                    }),
                 }),
                 preset: chunk.preset,
                 chunker_type: match chunk.chunker_type {
                     ChunkerType::Text => None,
                     ChunkerType::Markdown => Some("markdown".to_string()),
                     ChunkerType::Yaml => Some("yaml".to_string()),
+                    ChunkerType::Semantic => Some("semantic".to_string()),
                 },
                 sizing_type: match &chunk.sizing {
                     kreuzberg::ChunkSizing::Characters => None,
@@ -1665,6 +1704,7 @@ impl TryFrom<ExtractionConfig> for JsExtractionConfig {
                     _ => None,
                 },
                 prepend_heading_context: Some(chunk.prepend_heading_context),
+                topic_threshold: chunk.topic_threshold.map(|t| t as f64),
             }),
             images: val.images.map(|img| JsImageExtractionConfig {
                 extract_images: Some(img.extract_images),
@@ -1958,6 +1998,7 @@ impl TryFrom<FileExtractionConfig> for JsFileExtractionConfig {
         Ok(JsFileExtractionConfig {
             enable_quality_processing: val.enable_quality_processing,
             ocr: val.ocr.map(|ocr| JsOcrConfig {
+                enabled: Some(ocr.enabled),
                 backend: ocr.backend,
                 language: Some(ocr.language),
                 tesseract_config: ocr.tesseract_config.map(|tc| JsTesseractConfig {
@@ -2025,12 +2066,23 @@ impl TryFrom<FileExtractionConfig> for JsFileExtractionConfig {
                     batch_size: Some(emb.batch_size as u32),
                     show_download_progress: Some(emb.show_download_progress),
                     cache_dir: emb.cache_dir.and_then(|p| p.to_str().map(String::from)),
+                    acceleration: emb.acceleration.map(|a| JsAccelerationConfig {
+                        provider: Some(match a.provider {
+                            RustExecutionProviderType::Auto => "auto".to_string(),
+                            RustExecutionProviderType::Cpu => "cpu".to_string(),
+                            RustExecutionProviderType::CoreMl => "coreml".to_string(),
+                            RustExecutionProviderType::Cuda => "cuda".to_string(),
+                            RustExecutionProviderType::TensorRt => "tensorrt".to_string(),
+                        }),
+                        device_id: Some(a.device_id),
+                    }),
                 }),
                 preset: chunk.preset,
                 chunker_type: match chunk.chunker_type {
                     ChunkerType::Text => None,
                     ChunkerType::Markdown => Some("markdown".to_string()),
                     ChunkerType::Yaml => Some("yaml".to_string()),
+                    ChunkerType::Semantic => Some("semantic".to_string()),
                 },
                 sizing_type: match &chunk.sizing {
                     kreuzberg::ChunkSizing::Characters => None,
@@ -2047,6 +2099,7 @@ impl TryFrom<FileExtractionConfig> for JsFileExtractionConfig {
                     _ => None,
                 },
                 prepend_heading_context: Some(chunk.prepend_heading_context),
+                topic_threshold: chunk.topic_threshold.map(|t| t as f64),
             }),
             images: val.images.map(|img| JsImageExtractionConfig {
                 extract_images: Some(img.extract_images),

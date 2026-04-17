@@ -396,6 +396,7 @@ class LayoutDetectionConfig:
     confidence_threshold: float | None
     apply_heuristics: bool
     table_model: str | None
+    acceleration: AccelerationConfig | None
 
     def __init__(
         self,
@@ -404,6 +405,7 @@ class LayoutDetectionConfig:
         confidence_threshold: float | None = None,
         apply_heuristics: bool | None = None,
         table_model: str | None = None,
+        acceleration: AccelerationConfig | None = None,
     ) -> None: ...
 
 class AccelerationConfig:
@@ -1097,6 +1099,7 @@ class EmbeddingConfig:
 
     normalize: bool
     batch_size: int
+    acceleration: AccelerationConfig | None
 
     def __init__(
         self,
@@ -1106,6 +1109,7 @@ class EmbeddingConfig:
         batch_size: int | None = None,
         show_download_progress: bool | None = None,
         cache_dir: str | None = None,
+        acceleration: AccelerationConfig | None = None,
     ) -> None: ...
 
 class EmbeddingPreset:
@@ -1177,7 +1181,11 @@ class ChunkingConfig:
             Default: None
 
         chunker_type (str): Type of chunker to use. Supported values:
-            "text" (default), "markdown", "yaml". Default: "text"
+            "text" (default), "markdown", "yaml", "semantic".
+            Set ``chunker_type="semantic"`` for topic-aware chunking that
+            works out of the box -- no other parameters needed. All defaults
+            (max_chars=1000, overlap=200, topic_threshold=0.75) are tuned for
+            typical RAG use cases. Default: "text"
 
         sizing_type (str): How chunk size is measured. "characters" (default)
             or "tokenizer" for token-based sizing. Default: "characters"
@@ -1193,9 +1201,17 @@ class ChunkingConfig:
             prepends the heading hierarchy path to each chunk's content for
             improved retrieval context. Default: False
 
+        topic_threshold (float | None): Optional. Cosine similarity threshold
+            for topic boundary detection (0.0-1.0). Only used with
+            chunker_type="semantic" and an embedding config. You rarely need
+            to change this. Default: 0.75
+
     Example:
-        Basic chunking with defaults:
+        Semantic chunking (recommended for RAG, works with no extra config):
             >>> from kreuzberg import ExtractionConfig, ChunkingConfig
+            >>> config = ExtractionConfig(chunking=ChunkingConfig(chunker_type="semantic"))
+
+        Basic chunking with defaults:
             >>> config = ExtractionConfig(chunking=ChunkingConfig())
 
         Custom chunk size with overlap:
@@ -1206,9 +1222,6 @@ class ChunkingConfig:
             >>> config = ExtractionConfig(
             ...     chunking=ChunkingConfig(max_chars=512, embedding=EmbeddingConfig(model=EmbeddingModelType.preset("balanced")))
             ... )
-
-        Using preset configuration:
-            >>> config = ExtractionConfig(chunking=ChunkingConfig(preset="semantic"))
     """
 
     max_chars: int
@@ -1220,6 +1233,7 @@ class ChunkingConfig:
     sizing_model: str | None
     sizing_cache_dir: str | None
     prepend_heading_context: bool
+    topic_threshold: float | None
 
     def __init__(
         self,
@@ -1233,6 +1247,7 @@ class ChunkingConfig:
         sizing_model: str | None = None,
         sizing_cache_dir: str | None = None,
         prepend_heading_context: bool | None = None,
+        topic_threshold: float | None = None,
     ) -> None: ...
 
 class ImageExtractionConfig:

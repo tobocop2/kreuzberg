@@ -799,6 +799,30 @@ class Helpers
         }
     }
 
+    public static function assertLlmUsage(
+        ExtractionResult $result,
+        ?int $maxCount = null,
+        ?bool $isEmpty = null
+    ): void {
+        $usage = $result->llmUsage ?? $result->llm_usage ?? [];
+
+        if ($maxCount !== null) {
+            Assert::assertLessThanOrEqual(
+                $maxCount,
+                count($usage),
+                sprintf('llm_usage count %d > %d', count($usage), $maxCount)
+            );
+        }
+
+        if ($isEmpty === true) {
+            Assert::assertCount(
+                0,
+                $usage,
+                sprintf('Expected empty llm_usage, got %d', count($usage))
+            );
+        }
+    }
+
     public static function assertDjotContent(
         ExtractionResult $result,
         ?bool $hasContent = null,

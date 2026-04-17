@@ -11,7 +11,7 @@ import (
 	"testing"
 	"unicode"
 
-	kreuzberg "github.com/kreuzberg-dev/kreuzberg/packages/go/v4"
+	"github.com/kreuzberg-dev/kreuzberg/packages/go/v4"
 )
 
 var (
@@ -650,6 +650,23 @@ func assertProcessingWarnings(t *testing.T, result *kreuzberg.ExtractionResult, 
 	}
 	if maxCount != nil && len(warnings) > *maxCount {
 		t.Fatalf("expected at most %d processing warnings, got %d", *maxCount, len(warnings))
+	}
+}
+
+//nolint:unused // referenced by generated tests when fixtures use llm usage assertions
+func assertLlmUsage(t *testing.T, result *kreuzberg.ExtractionResult, maxCount *int, isEmpty *bool) {
+	t.Helper()
+	usage := result.LlmUsage
+	if usage == nil {
+		usage = []kreuzberg.LlmUsage{}
+	}
+	if isEmpty != nil && *isEmpty {
+		if len(usage) != 0 {
+			t.Fatalf("expected llm usage to be empty, got %d", len(usage))
+		}
+	}
+	if maxCount != nil && len(usage) > *maxCount {
+		t.Fatalf("expected at most %d llm usage entries, got %d", *maxCount, len(usage))
 	}
 }
 

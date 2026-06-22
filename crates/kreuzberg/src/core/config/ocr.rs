@@ -341,7 +341,7 @@ pub struct OcrPipelineConfig {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum VlmFallbackPolicy {
     /// No VLM fallback (default). Behaves identically to the pre-policy single-backend mode.
@@ -362,6 +362,90 @@ pub enum VlmFallbackPolicy {
 
     /// Skip the classical OCR backend entirely. Every page is sent to the VLM.
     Always,
+}
+
+// `VlmFallbackPolicy` serializes to its canonical internally-tagged form
+// (`{"mode": "..."}`), but the polyglot bindings and config files frequently
+// pass the ergonomic shorthands the public API advertises (`str | float`):
+//
+//   - `"disabled"` / `"always"`  → unit variants (a bare string the
+//     internally-tagged enum would otherwise reject)
+//   - a bare float               → `OnLowQuality { quality_threshold }`
+//   - `{"mode": ...}`            → the canonical tagged object
+//
+// The generated Python binding builds the default `OcrConfig` with
+// `vlm_fallback="disabled"` and round-trips it through this deserializer, so a
+// bare string must parse. Deserialize is therefore hand-written to accept all
+// three shapes while Serialize keeps emitting the tagged form.
+impl<'de> Deserialize<'de> for VlmFallbackPolicy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PolicyVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for PolicyVisitor {
+            type Value = VlmFallbackPolicy;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str(r#""disabled", "always", a quality-threshold number, or a {"mode": ...} object"#)
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                match value {
+                    "disabled" => Ok(VlmFallbackPolicy::Disabled),
+                    "always" => Ok(VlmFallbackPolicy::Always),
+                    other => Err(E::custom(format!(
+                        "invalid VlmFallbackPolicy {other:?}; expected \"disabled\", \"always\", a \
+                         quality-threshold number, or a {{\"mode\": ...}} object"
+                    ))),
+                }
+            }
+
+            fn visit_f64<E: serde::de::Error>(self, value: f64) -> Result<Self::Value, E> {
+                Ok(VlmFallbackPolicy::OnLowQuality {
+                    quality_threshold: value,
+                })
+            }
+
+            // serde routes JSON/TOML/YAML integers (e.g. `1`) here, not to `visit_f64`;
+            // accept them as thresholds too so a bare number behaves the same either way.
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                Ok(VlmFallbackPolicy::OnLowQuality {
+                    quality_threshold: value as f64,
+                })
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                Ok(VlmFallbackPolicy::OnLowQuality {
+                    quality_threshold: value as f64,
+                })
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+                // Canonical internally-tagged object. Delegate to a derived mirror so its
+                // native field errors (e.g. missing `quality_threshold`) surface verbatim.
+                #[derive(Deserialize)]
+                #[serde(tag = "mode", rename_all = "snake_case")]
+                enum Tagged {
+                    Disabled,
+                    OnLowQuality { quality_threshold: f64 },
+                    Always,
+                }
+                match Tagged::deserialize(serde::de::value::MapAccessDeserializer::new(map))? {
+                    Tagged::Disabled => Ok(VlmFallbackPolicy::Disabled),
+                    Tagged::OnLowQuality { quality_threshold } => {
+                        Ok(VlmFallbackPolicy::OnLowQuality { quality_threshold })
+                    }
+                    Tagged::Always => Ok(VlmFallbackPolicy::Always),
+                }
+            }
+        }
+
+        // `deserialize_any` requires a self-describing format — the same constraint the
+        // original internally-tagged derive already imposed, so no format regression.
+        deserializer.deserialize_any(PolicyVisitor)
+    }
 }
 
 /// OCR configuration.
@@ -1175,6 +1259,78 @@ mod tests {
         let json = serde_json::to_string(&policy).unwrap();
         let deserialized: VlmFallbackPolicy = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized, VlmFallbackPolicy::Always);
+    }
+
+    #[test]
+    fn test_vlm_fallback_policy_deserialize_bare_string_shorthand() {
+        // The generated Python default OcrConfig() passes the bare string
+        // "disabled" through the binding; it must parse without the tagged wrapper.
+        let disabled: VlmFallbackPolicy = serde_json::from_str("\"disabled\"").unwrap();
+        assert_eq!(disabled, VlmFallbackPolicy::Disabled);
+
+        let always: VlmFallbackPolicy = serde_json::from_str("\"always\"").unwrap();
+        assert_eq!(always, VlmFallbackPolicy::Always);
+    }
+
+    #[test]
+    fn test_vlm_fallback_policy_deserialize_bare_float_shorthand() {
+        // The public type is `str | float`; a bare number is OnLowQuality's threshold.
+        let policy: VlmFallbackPolicy = serde_json::from_str("0.6").unwrap();
+        match policy {
+            VlmFallbackPolicy::OnLowQuality { quality_threshold } => {
+                assert!((quality_threshold - 0.6).abs() < f64::EPSILON);
+            }
+            other => panic!("expected OnLowQuality, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_vlm_fallback_policy_deserialize_tagged_object_still_works() {
+        let policy: VlmFallbackPolicy =
+            serde_json::from_str(r#"{"mode":"on_low_quality","quality_threshold":0.3}"#).unwrap();
+        match policy {
+            VlmFallbackPolicy::OnLowQuality { quality_threshold } => {
+                assert!((quality_threshold - 0.3).abs() < f64::EPSILON);
+            }
+            other => panic!("expected OnLowQuality, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_vlm_fallback_policy_deserialize_unknown_string_errors() {
+        let err = serde_json::from_str::<VlmFallbackPolicy>("\"bogus\"").unwrap_err();
+        assert!(err.to_string().contains("invalid VlmFallbackPolicy"), "got: {err}");
+    }
+
+    #[test]
+    fn test_vlm_fallback_policy_deserialize_bare_integer_shorthand() {
+        // Integers route through visit_i64/visit_u64, not visit_f64; a bare `1`
+        // must behave the same as `1.0` rather than being rejected.
+        let policy: VlmFallbackPolicy = serde_json::from_str("1").unwrap();
+        match policy {
+            VlmFallbackPolicy::OnLowQuality { quality_threshold } => {
+                assert!((quality_threshold - 1.0).abs() < f64::EPSILON);
+            }
+            other => panic!("expected OnLowQuality, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_vlm_fallback_policy_malformed_tagged_object_keeps_field_error() {
+        // The map path delegates to the derived tagged mirror, so a malformed
+        // object surfaces serde's precise field error rather than a generic one.
+        let err = serde_json::from_str::<VlmFallbackPolicy>(r#"{"mode":"on_low_quality"}"#).unwrap_err();
+        assert!(err.to_string().contains("quality_threshold"), "got: {err}");
+    }
+
+    #[test]
+    fn test_ocr_config_default_deserializes_from_serialized_default() {
+        // Regression for the Python default OcrConfig() crash (kreuzberg-y7k):
+        // the serialized default (with vlm_fallback "disabled") must round-trip.
+        let config = OcrConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: OcrConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.vlm_fallback, VlmFallbackPolicy::Disabled);
     }
 
     #[test]

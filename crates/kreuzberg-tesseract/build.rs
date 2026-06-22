@@ -734,6 +734,11 @@ mod build_tesseract {
         cc::Build::new()
             .file("src/shim.cpp")
             .cpp(true)
+            // The vendored Tesseract headers use C++11+ constructs (constexpr,
+            // alias declarations). Match the C++17 standard the rest of the build
+            // uses (see get_os_specific_config) so the shim compiles under Apple
+            // clang, which would otherwise default to an older dialect.
+            .std("c++17")
             .include(tesseract_install_dir.join("include"))
             .compile("kreuzberg_shim");
 

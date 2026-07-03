@@ -1,0 +1,148 @@
+# TEMPORARY verification workflow (fork-only). Provides empirical evidence for
+# the Intel-macOS PR: the x86_64 CLI builds, packages via the exact publish.yaml
+# vendoring loop, and the resulting tarball runs real ONNX inference on a
+# machine with the Homebrew ONNX closure UNINSTALLED (the self-containment
+# claim). Remove before merging upstream.
+name: Verify Intel macOS (self-contained bundle)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [verify-intel-mac-closure]
+
+jobs:
+  intel-cli-bundle:
+    name: Intel CLI — build, package, Homebrew-less ONNX smoke test
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: xberg-io/actions/setup-rust@v1
+        with:
+          target: x86_64-apple-darwin
+      - name: Install system dependencies
+        uses: ./.github/actions/install-system-deps
+      - uses: xberg-io/actions/build-rust-cli@v1
+        id: build
+        with:
+          package-name: xberg-cli
+          binary-name: xberg
+          target: x86_64-apple-darwin
+          # Exactly the real cli-binaries Intel matrix invocation.
+          extra-cargo-args: --features ort-dynamic,mcp,mcp-http,api
+
+      - name: Verify native x86_64 + no static ONNX linkage
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN="${{ steps.build.outputs.binary-path }}"
+          file "$BIN" | grep -q "x86_64"
+          otool -L "$BIN"
+          if otool -L "$BIN" | grep -qi "onnxruntime"; then
+            echo "ERROR: binary hard-links onnxruntime; expected load-dynamic" >&2; exit 1
+          fi
+          echo "OK: native x86_64 Mach-O, no static onnxruntime linkage"
+
+      # Verbatim from publish.yaml "Vendor ONNX Runtime dylib (Intel macOS)".
+      - name: Vendor ONNX Runtime dylib (Intel macOS)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
+          brew install --bottle-tag=sonoma onnxruntime \
+            || brew install onnxruntime
+          ORT_LIB="$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib"
+          test -f "$ORT_LIB"
+          echo "ORT_VENDOR_LIB=$ORT_LIB" >> "$GITHUB_ENV"
+
+      # Verbatim from publish.yaml "Package CLI artifact" (macOS Intel branch).
+      - name: Package CLI artifact (publish.yaml logic)
+        env:
+          BINARY_PATH: ${{ steps.build.outputs.binary-path }}
+          TARGET: x86_64-apple-darwin
+        shell: bash
+        run: |
+          set -euxo pipefail
+          STAGE="xberg-cli-${TARGET}"
+          mkdir -p "$STAGE"
+          cp "$BINARY_PATH" "$STAGE/xberg"
+          if [[ "$TARGET" == "x86_64-apple-darwin" && -n "${ORT_VENDOR_LIB:-}" ]]; then
+            cp "$ORT_VENDOR_LIB" "$STAGE/libonnxruntime.dylib"
+            chmod u+w "$STAGE/libonnxruntime.dylib"
+            install_name_tool -id "@loader_path/libonnxruntime.dylib" "$STAGE/libonnxruntime.dylib"
+            changed=1
+            while [[ "$changed" == 1 ]]; do
+              changed=0
+              for lib in "$STAGE"/*.dylib; do
+                while IFS= read -r dep; do
+                  base="$(basename "$dep")"
+                  src="$dep"
+                  [[ "$dep" == @rpath/* ]] && src="$(brew --prefix onnxruntime)/lib/$base"
+                  if [[ ! -f "$STAGE/$base" ]]; then
+                    [[ -f "$src" ]] || continue
+                    cp "$src" "$STAGE/$base"
+                    chmod u+w "$STAGE/$base"
+                    install_name_tool -id "@loader_path/$base" "$STAGE/$base"
+                    changed=1
+                  fi
+                  install_name_tool -change "$dep" "@loader_path/$base" "$lib" || true
+                done < <(otool -L "$lib" | tail -n +2 | awk '{print $1}' \
+                  | grep -E '^(/opt/homebrew|/usr/local|@rpath)/' || true)
+              done
+            done
+            for lib in "$STAGE"/*.dylib; do
+              codesign --force -s - "$lib" || true
+            done
+          fi
+          tar -czf "${STAGE}.tar.gz" "$STAGE"
+
+      - name: Assert bundle is closed (no Homebrew refs, no dup onnxruntime)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          STAGE="xberg-cli-x86_64-apple-darwin"
+          ls -la "$STAGE"
+          # Exactly one libonnxruntime* file — the versioned-ID duplicate must not come back.
+          count=$(ls "$STAGE"/libonnxruntime* | wc -l | tr -d ' ')
+          [[ "$count" == 1 ]] || { echo "ERROR: expected 1 libonnxruntime*, got $count" >&2; exit 1; }
+          # Every staged dylib must reference only @loader_path/ or system paths.
+          for lib in "$STAGE"/*.dylib; do
+            if otool -L "$lib" | tail -n +2 | awk '{print $1}' \
+                | grep -E '^(/opt/homebrew|/usr/local|@rpath)/'; then
+              echo "ERROR: $lib still references Homebrew/@rpath paths" >&2; exit 1
+            fi
+          done
+          echo "OK: dependency closure fully vendored and rewritten to @loader_path"
+
+      - name: Uninstall the Homebrew ONNX closure (simulate a clean user machine)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
+          for f in onnxruntime onnx protobuf abseil re2; do
+            brew list "$f" >/dev/null 2>&1 && brew uninstall --ignore-dependencies "$f" || true
+          done
+          test ! -e /usr/local/opt/onnxruntime/lib/libonnxruntime.dylib
+          echo "OK: no Homebrew ONNX Runtime (or its deps) left on the machine"
+
+      - name: Homebrew-less ONNX smoke test from the extracted tarball
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p /tmp/xberg-install
+          tar -xzf xberg-cli-x86_64-apple-darwin.tar.gz -C /tmp/xberg-install
+          BIN="/tmp/xberg-install/xberg-cli-x86_64-apple-darwin/xberg"
+          "$BIN" --version
+          "$BIN" embed \
+            --text "Intel macOS self-contained ONNX Runtime smoke test" \
+            --preset fast --provider local > out.json
+          test -s out.json
+          head -c 200 out.json; echo
+          echo "OK: ONNX inference ran from the bundled dylib closure with no Homebrew ONNX installed"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: xberg-cli-x86_64-apple-darwin-selfcontained
+          path: xberg-cli-x86_64-apple-darwin.tar.gz
+          retention-days: 7

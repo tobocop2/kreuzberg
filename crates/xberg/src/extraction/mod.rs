@@ -1,6 +1,7 @@
 #[cfg(any(feature = "pdf", feature = "office", feature = "ocr"))]
 pub mod blank_detection;
 pub mod derive;
+#[cfg(any(feature = "html", feature = "email"))]
 pub(crate) mod grid_flatten;
 pub mod image_kind;
 pub mod structured;

@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Rendered PDF pages no longer drop every `i`, `j`, period, colon, semicolon, exclamation mark
+  and question mark when a page uses a Type 1C (CFF) font whose charstrings carry the deprecated
+  `dotsection` operator, which distiller-produced subsets do routinely. The missing glyphs flowed
+  straight into OCR: backends received page images with the letters already gone and transcribed
+  "capacities" as "capac t es". The root cause is ttf-parser aborting the whole charstring on the
+  operator; the workspace pins a patched 0.25.1 through `[patch.crates-io]` until a ttf-parser
+  release carries the one-line fix. The pin covers everything built from this repository (wheels,
+  npm/gem/composer packages, prebuilt CLI binaries, Docker images); `cargo install` from
+  crates.io picks the fix up once a patched ttf-parser is released, since Cargo strips patch
+  sections from published crates. (#1362)
+
 ## [1.0.10] - 2026-08-02
 
 ### Fixed
@@ -28,8 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   icons. (#1360)
 - Dart native-library loading now propagates download, filesystem, and checksum failures instead
   of silently falling back to an unverified default library resolution path.
-- PaddleOCR concurrent cold starts now share one engine initialization per model and accelerator,
-  with distinct cache entries for different GPU device IDs.
+- PaddleOCR concurrent cold starts now run off async worker threads and share one engine
+  initialization per model and accelerator, with distinct cache entries for different GPU device IDs.
+- Benchmark text F1 now segments CJK around embedded Latin and numeric text while ignoring OCR line
+  wrapping, preventing mixed-script output formatting from distorting quality comparisons.
 
 ## [1.0.9] - 2026-08-02
 

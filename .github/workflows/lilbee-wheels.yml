@@ -1,0 +1,274 @@
+name: lilbee wheels
+
+# Builds the xberg Python wheels lilbee pins from this fork branch and attaches
+# them to a GitHub release on the fork. lilbee's pages.yml turns that release
+# into the PEP 503 index at https://lilbee.sh/xberg/. The python-wheels job is
+# publish.yaml's job verbatim (minus the release gating), so the wheels match
+# the PyPI ones apart from the patches on this branch and the +lilbee version.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Fork release tag that receives the wheels"
+        required: true
+        default: "xberg-v1.1.0.dev1+lilbee1"
+
+permissions:
+  contents: write
+
+env:
+  GLIBC_FLOOR: "2.28"
+
+jobs:
+  epub-tests:
+    name: EPUB extractor unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: xberg-io/actions/setup-rust@v1
+      - name: Install system dependencies
+        uses: ./.github/actions/install-system-deps
+      - name: Run the EPUB extractor tests
+        run: cargo test -p xberg --lib extractors::epub
+
+  python-wheels:
+    name: Build Python wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-15, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+          submodules: false
+      - name: Install system dependencies
+        uses: ./.github/actions/install-system-deps
+
+      # pyke's default download strategy links a Windows ORT build that always
+      # imports DirectML.dll (ort-sys's static_link_prerequisites is
+      # unconditional on windows targets), which this repo never ships and
+      # which no arm of ort_discovery.rs ever selects -- so `import xberg`
+      # fails on a clean Windows host before any Rust code runs
+      # (xberg-io/xberg#1456). This step forces ORT_STRATEGY=system (the same
+      # strategy every other Windows leg in this workflow already uses),
+      # which hits an early return in ort-sys before static_link_prerequisites
+      # runs, so the DirectML import is never introduced in the first place.
+      - name: Setup ONNX Runtime (Windows)
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-onnx-runtime
+        with:
+          ort-version: "1.24.2"
+          dest-dir: crates/xberg-py
+
+      - name: Build wheels
+        uses: xberg-io/actions/build-python-wheels@v1
+        with:
+          python-version: "3.13"
+          package-dir: packages/python
+          cibw-build: "cp310-*"
+          upload-artifact: "false"
+          build-libheif: "true"
+          manylinux-x86_64-image: "manylinux_2_28"
+          manylinux-aarch64-image: "manylinux_2_28"
+          cibw-before-build-linux: |
+            set -euo pipefail
+            pip install maturin uv
+            source ~/.cargo/env
+            # Prevent GCC 14+ from emitting C23-versioned glibc symbols (__isoc23_strtoll etc.)
+            # that require glibc ≥ 2.38. Fixes #588: ensures wheels work on Debian 12 (glibc 2.36),
+            # Ubuntu 22.04 LTS (2.35), and RHEL 8 (2.28).
+            export CFLAGS="-std=gnu11"
+            export CXXFLAGS="-std=gnu++17"
+            export CPPFLAGS="-std=gnu11"
+            export CMAKE_C_FLAGS="${CFLAGS}"
+            export CMAKE_CXX_FLAGS="${CXXFLAGS}"
+            export CC="gcc ${CFLAGS}"
+            export CXX="g++ ${CXXFLAGS}"
+            # Link Microsoft's glibc-clean ONNX Runtime, not the pyke prebuilt; auditwheel bundles it (#1284).
+            ort_version=1.24.2
+            case "$(uname -m)" in aarch64 | arm64) ort_arch=aarch64 ;; *) ort_arch=x64 ;; esac
+            curl -fsSL -o /tmp/ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v${ort_version}/onnxruntime-linux-${ort_arch}-${ort_version}.tgz"
+            mkdir -p /opt/msort && tar -xzf /tmp/ort.tgz -C /opt/msort --strip-components=1
+          cibw-environment: 'MATURIN_BUILD_ARGS="--compatibility manylinux_2_28" CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=gcc CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=gcc CC_x86_64_unknown_linux_gnu=gcc CC_aarch64_unknown_linux_gnu=gcc CXX_x86_64_unknown_linux_gnu=g++ CXX_aarch64_unknown_linux_gnu=g++ ORT_STRATEGY=system ORT_LIB_LOCATION=/opt/msort/lib ORT_SKIP_DOWNLOAD=1 ORT_PREFER_DYNAMIC_LINK=1 LD_LIBRARY_PATH=/opt/msort/lib'
+          # The deployment target is the wheel's macOS floor: 15.0 left macOS 11-14
+          # with no installable wheel (#1243). delocate bundles the libheif closure,
+          # so the hook builds it from source at the target and PKG_CONFIG_PATH links
+          # the wheel against it instead of Homebrew's runner-OS bottles. ~keep
+          cibw-before-build-macos: bash {project}/scripts/ci/build-macos-heif-deps.sh
+          cibw-environment-macos: 'MATURIN_BUILD_ARGS="" CARGO_BUILD_LOCKED=true MACOSX_DEPLOYMENT_TARGET=11.0 PKG_CONFIG_PATH=/tmp/xberg-heif/lib/pkgconfig'
+          cibw-before-build-windows: "rustup install 1.95-x86_64-pc-windows-msvc --profile minimal --component rust-src --component rustfmt --component clippy && rustup target add x86_64-pc-windows-msvc --toolchain 1.95-x86_64-pc-windows-msvc && pip install maturin uv && set PATH=%USERPROFILE%\\.cargo\\bin;%PATH%"
+          cibw-environment-windows: 'MATURIN_BUILD_ARGS="--target x86_64-pc-windows-msvc" RUSTUP_TOOLCHAIN="1.95-x86_64-pc-windows-msvc" RUSTC_WRAPPER='
+
+      - name: Vendor ONNX Runtime into wheel
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # auditwheel's default repair only bundles libs it can resolve via ldd
+          # at repair time; it has been observed to drop libonnxruntime.so here
+          # (#1284 follow-up). Vendor explicitly, same as every other native
+          # target in this workflow, instead of depending on auditwheel alone.
+          for w in wheelhouse/*.whl; do bash scripts/ci/vendor-native-closure.sh "$w"; done
+
+      - name: Vendor ONNX Runtime into wheel (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # System-strategy dynamic linking (switched above) no longer bakes ORT
+          # into the .pyd the way the pyke static-link strategy did, so it must
+          # be vendored explicitly -- same rationale as the Linux step above.
+          Get-ChildItem -Path wheelhouse -Filter "*.whl" | ForEach-Object {
+            & "${{ github.workspace }}\scripts\ci\vendor-windows-wheel-closure.ps1" -Wheel $_.FullName -DllSourceDir "$env:ORT_LIB_LOCATION" -NativeGlob "*.pyd"
+            if ($LASTEXITCODE -ne 0) { throw "vendor-windows-wheel-closure failed for $($_.FullName)" }
+          }
+
+      - name: Verify wheel has no DirectML import and ships ONNX Runtime (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path wheelhouse -Filter "*.whl" | ForEach-Object {
+            & "${{ github.workspace }}\scripts\ci\verify-windows-dll-closure.ps1" -Artifact $_.FullName -NativeGlob "*.pyd"
+            if ($LASTEXITCODE -ne 0) { throw "verify-windows-dll-closure failed for $($_.FullName)" }
+          }
+
+      - name: Verify wheel glibc floor + bundled ONNX Runtime
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          for w in wheelhouse/*.whl; do bash scripts/ci/verify-glibc-floor.sh "$w" "$GLIBC_FLOOR"; done
+
+      # The checks above only prove a file exists (or, for Linux/Windows,
+      # inspect symbols/imports statically) -- none of them ever import or
+      # run the wheel. This installs it into a real venv on this same runner
+      # (matching glibc/macOS/Windows -- the family it was actually built
+      # for, unlike the musl leg which needs a separate Alpine container) and
+      # runs a real extraction against a known fixture, asserting the exact
+      # expected text comes back. See scripts/ci/smoke_test_python_wheel.py
+      # for why import-only is not enough. No continue-on-error: a broken
+      # wheel must fail this job, not merely warn.
+      - name: Smoke-test wheel (real extraction, not just import)
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel="$(find wheelhouse -name '*.whl' | head -n1)"
+          python="python3"
+          venv_python="smoke-venv/bin/python"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            python="python"
+            venv_python="smoke-venv/Scripts/python.exe"
+          fi
+          "$python" -m venv smoke-venv
+          "$venv_python" -m pip install --no-cache-dir --quiet "$wheel"
+          "$venv_python" scripts/ci/smoke_test_python_wheel.py \
+            scripts/ci/fixtures/musl-python-smoke.pdf "XBERG MUSL SMOKE 490"
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+          retention-days: 14
+
+  python-wheels-musl:
+    name: Build Python wheels (musl-${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, arch: x86_64, target: x86_64-unknown-linux-musl }
+          - { os: ubuntu-24.04-arm, arch: aarch64, target: aarch64-unknown-linux-musl }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Build Python wheel via Alpine Docker
+        run: |
+          docker build -f docker/Dockerfile.musl-python \
+            --build-arg TARGET=${{ matrix.target }} \
+            --output type=local,dest=./build-output .
+
+      - name: Verify musl wheel produced
+        run: |
+          test -n "$(find build-output -name '*.whl')" || {
+            echo "::error::no wheel produced by musl build for ${{ matrix.target }}"; exit 1; }
+
+      # Closes xberg-io/xberg#490: the wheel-existence check above only proves a
+      # file was produced, never that it installs and extracts correctly on the
+      # musl libc family it was cross-compiled for. This installs it into a real
+      # Alpine container and runs an actual extraction against a known fixture,
+      # asserting the exact expected text comes back. No continue-on-error: a
+      # broken wheel must fail this job, not merely warn.
+      - name: Smoke-test musl wheel (real extraction, not just import)
+        run: |
+          wheel="$(find build-output -name '*.whl' | head -n1)"
+          bash scripts/ci/smoke-test-musl-python-wheel.sh "$wheel"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python-wheels-musl-${{ matrix.arch }}
+          path: build-output/*.whl
+          if-no-files-found: error
+          retention-days: 14
+
+
+  smoke:
+    # The books that motivated the branch: Internet Archive EPUB 3 files whose
+    # OPF has more than 1024 elements and whose pages carry media-type text/html.
+    name: Extract the Internet Archive EPUBs
+    needs: [python-wheels]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v7
+        with:
+          name: python-wheels-ubuntu-latest
+          path: dist
+      - name: Install the wheel
+        run: pip install dist/xberg-*manylinux*x86_64.whl
+      - name: Download the books
+        run: |
+          curl -sSL --retry 5 -o bscs.epub "https://archive.org/download/BSCS_Biology_A_Molecular_Approach_Student_Edition_by_McGraw-Hill_Education/BSCS_Biology_A_Molecular_Approach_Student_Edition_by_McGraw-Hill_Education.epub"
+          curl -sSL --retry 5 -o insects.epub "https://archive.org/download/TheInsectsAnOutlineOfEntomology/The%20Insects%20%20An%20Outline%20of%20Entomology.epub"
+      - name: Extract with default limits
+        run: |
+          python - <<'PY'
+          import asyncio
+          from xberg import ExtractionConfig, ExtractInput, ExtractInputKind, extract
+          for name in ("bscs.epub", "insects.epub"):
+              data = open(name, "rb").read()
+              result = asyncio.run(extract(ExtractInput(kind=ExtractInputKind.BYTES, bytes=data, filename=name), ExtractionConfig()))
+              assert not result.errors, result.errors
+              content = result.results[0].content
+              print(f"{name}: {len(content)} characters")
+              assert len(content) > 1_000_000, f"{name} extracted only {len(content)} characters"
+          PY
+
+  release:
+    name: Attach wheels to the fork release
+    needs: [epub-tests, python-wheels, smoke]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.release_tag }}
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: python-wheels-*
+          path: wheels
+          merge-multiple: true
+      - name: Create or reuse the release
+        run: |
+          ls -l wheels
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+                 --title "$TAG" --notes "xberg wheels for lilbee, built from $GITHUB_SHA."
+      - name: Upload the wheels
+        run: gh release upload "$TAG" wheels/*.whl --repo "$GITHUB_REPOSITORY" --clobber

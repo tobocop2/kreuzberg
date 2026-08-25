@@ -200,6 +200,10 @@ try {
     exit 1
   }
   Write-Log "artifact passes the Windows DLL closure gate"
+  # Without an explicit exit, $LASTEXITCODE in the caller keeps the status of
+  # the last native command that ran before this script, and the workflow
+  # step throws on a wheel that passed. ~keep
+  exit 0
 }
 finally {
   if ($workDir -and (Test-Path $workDir)) { Remove-Item -Recurse -Force $workDir }

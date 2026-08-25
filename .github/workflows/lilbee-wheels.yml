@@ -30,7 +30,7 @@ jobs:
       - name: Install system dependencies
         uses: ./.github/actions/install-system-deps
       - name: Run the EPUB extractor tests
-        run: cargo test -p xberg --lib --features office extractors::epub extractors::security
+        run: "cargo test -p xberg --lib --features office extractors::"
 
   python-wheels:
     name: Build Python wheels (${{ matrix.os }})

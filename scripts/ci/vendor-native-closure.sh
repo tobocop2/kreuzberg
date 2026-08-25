@@ -54,11 +54,20 @@ trap 'log "ERROR: exit $? at line ${LINENO} (function: ${FUNCNAME[0]:-main}): ${
 # runtime beside the artifact under $ORIGIN is what auditwheel already does
 # for the musl Python wheel in this repo -- the one artifact of the five that
 # was unaffected. ~keep
+#
+# That reasoning is musl-only. On glibc the manylinux policy already treats
+# libstdc++/libgcc_s as host libraries, and bundling the build host's copies
+# ships a libstdc++ that needs the host's glibc (2.38 on ubuntu-latest), so
+# `import xberg` fails on any glibc older than the runner's (Ubuntu 22.04,
+# Debian 12, RHEL 9) even though the wheel is tagged manylinux_2_28. ~keep
+on_musl() { ls /lib/ld-musl-* >/dev/null 2>&1; }
+
 is_base_lib() {
   case "$1" in
   ld-linux* | ld-musl* | libc.so* | libc.musl* | libc-*.so* | libm.so* | libmvec.so* | \
     libdl.so* | librt.so* | libpthread.so* | libresolv.so* | \
     libssl.so* | libcrypto.so*) return 0 ;;
+  libstdc++.so* | libgcc_s.so*) on_musl && return 1 || return 0 ;;
   *) return 1 ;;
   esac
 }

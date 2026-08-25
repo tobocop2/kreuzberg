@@ -367,7 +367,11 @@ impl ZipBombValidator {
             total_uncompressed = total_uncompressed.saturating_add(uncompressed_size);
             total_compressed = total_compressed.saturating_add(compressed_size);
 
-            if uncompressed_size > 0 {
+            // A small entry cannot be a bomb whatever its ratio: a blank JPEG or an
+            // all-whitespace stylesheet compresses far past 100:1 and real EPUBs
+            // carry them. The aggregate ratio and max_archive_size still bound the
+            // whole archive; the per-entry check is for the one huge entry. ~keep
+            if uncompressed_size >= MIN_ENTRY_SIZE_FOR_RATIO_CHECK {
                 // A zero compressed size paired with a non-zero uncompressed size cannot be
                 // produced by any compressor; treating it as an unbounded ratio stops the
                 // entry from slipping past this check on a division it never performs. ~keep
@@ -407,6 +411,9 @@ impl ZipBombValidator {
         Ok(())
     }
 }
+
+/// Smallest entry the per-entry compression ratio check applies to (1 MiB).
+const MIN_ENTRY_SIZE_FOR_RATIO_CHECK: u64 = 1 << 20;
 
 /// Helper struct for tracking and validating aggregate string growth during extraction.
 ///
@@ -1165,5 +1172,50 @@ mod tests {
             resolve_container_entry("word", "/media/image1.png"),
             Ok("media/image1.png".to_string())
         );
+    }
+
+    #[cfg(any(
+        feature = "archives",
+        feature = "hwpx",
+        feature = "iwork",
+        feature = "office",
+        feature = "excel"
+    ))]
+    fn zip_with_entry(size: usize) -> zip::ZipArchive<std::io::Cursor<Vec<u8>>> {
+        use std::io::Write;
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::FileOptions::<'_, ()>::default().compression_method(zip::CompressionMethod::Deflated);
+        writer.start_file("blank.bin", options).unwrap();
+        writer.write_all(&vec![0u8; size]).unwrap();
+        zip::ZipArchive::new(writer.finish().unwrap()).unwrap()
+    }
+
+    #[cfg(any(
+        feature = "archives",
+        feature = "hwpx",
+        feature = "iwork",
+        feature = "office",
+        feature = "excel"
+    ))]
+    #[test]
+    fn should_accept_a_small_highly_compressible_entry() {
+        let mut archive = zip_with_entry(337_832);
+        let validator = ZipBombValidator::new(SecurityLimits::default());
+        assert!(validator.validate(&mut archive).is_ok());
+    }
+
+    #[cfg(any(
+        feature = "archives",
+        feature = "hwpx",
+        feature = "iwork",
+        feature = "office",
+        feature = "excel"
+    ))]
+    #[test]
+    fn should_reject_a_large_highly_compressible_entry() {
+        let mut archive = zip_with_entry(4 << 20);
+        let validator = ZipBombValidator::new(SecurityLimits::default());
+        let error = validator.validate(&mut archive).expect_err("a 4 MiB entry at >100:1 is a bomb");
+        assert!(error.to_string().contains("ZIP bomb"));
     }
 }

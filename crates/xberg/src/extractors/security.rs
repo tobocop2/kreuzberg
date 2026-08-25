@@ -1181,25 +1181,31 @@ mod tests {
         feature = "office",
         feature = "excel"
     ))]
-    fn zip_with_entry(size: usize) -> zip::ZipArchive<std::io::Cursor<Vec<u8>>> {
+    fn zip_with_blank_entry(blank_size: usize) -> zip::ZipArchive<std::io::Cursor<Vec<u8>>> {
         use std::io::Write;
         let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         let options = zip::write::FileOptions::<'_, ()>::default().compression_method(zip::CompressionMethod::Deflated);
+        // A blank page scan next to a real one: the archive as a whole compresses
+        // like a book, only the blank entry exceeds the ratio.
         writer.start_file("blank.bin", options).unwrap();
-        writer.write_all(&vec![0u8; size]).unwrap();
+        writer.write_all(&vec![0u8; blank_size]).unwrap();
+        writer.start_file("photo.bin", options).unwrap();
+        let mut state: u32 = 0x9E37_79B9;
+        let noise: Vec<u8> = (0..(1 << 20))
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as u8
+            })
+            .collect();
+        writer.write_all(&noise).unwrap();
         zip::ZipArchive::new(writer.finish().unwrap()).unwrap()
     }
 
-    #[cfg(any(
-        feature = "archives",
-        feature = "hwpx",
-        feature = "iwork",
-        feature = "office",
-        feature = "excel"
-    ))]
     #[test]
     fn should_accept_a_small_highly_compressible_entry() {
-        let mut archive = zip_with_entry(337_832);
+        let mut archive = zip_with_blank_entry(337_832);
         let validator = ZipBombValidator::new(SecurityLimits::default());
         assert!(validator.validate(&mut archive).is_ok());
     }
@@ -1213,7 +1219,7 @@ mod tests {
     ))]
     #[test]
     fn should_reject_a_large_highly_compressible_entry() {
-        let mut archive = zip_with_entry(4 << 20);
+        let mut archive = zip_with_blank_entry(4 << 20);
         let validator = ZipBombValidator::new(SecurityLimits::default());
         let error = validator.validate(&mut archive).expect_err("a 4 MiB entry at >100:1 is a bomb");
         assert!(error.to_string().contains("ZIP bomb"));
